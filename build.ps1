@@ -1,9 +1,9 @@
-﻿param([switch]$DesktopTests, [switch]$FolderTests, [switch]$MenuTests, [switch]$EditorTests, [switch]$ThemeTests, [switch]$WindTests, [switch]$BasketTests, [switch]$ScrollTests, [switch]$BasketAppearanceTests, [switch]$BasketMotionTests, [switch]$UpdateTests, [switch]$TextTests, [switch]$EnvelopeMotionTests, [switch]$MonitorTests, [switch]$Package)
+﻿param([switch]$ShortcutUiTests, [string]$OutputDirectory = "build", [switch]$CaptureTests, [switch]$DesktopTests, [switch]$FolderTests, [switch]$MenuTests, [switch]$EditorTests, [switch]$ThemeTests, [switch]$WindTests, [switch]$BasketTests, [switch]$ScrollTests, [switch]$BasketAppearanceTests, [switch]$BasketMotionTests, [switch]$UpdateTests, [switch]$TextTests, [switch]$EnvelopeMotionTests, [switch]$MonitorTests, [switch]$Package)
 $ErrorActionPreference = 'Stop'
 $projectRoot = $PSScriptRoot
 $frameworkPath = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319'
 $compilerPath = Join-Path $frameworkPath 'csc.exe'
-$buildPath = Join-Path $projectRoot 'build'
+$buildPath = if ([System.IO.Path]::IsPathRooted($OutputDirectory)) { $OutputDirectory } else { Join-Path $projectRoot $OutputDirectory }
 New-Item -ItemType Directory -Path $buildPath -Force | Out-Null
 $references = @(
     "/r:$frameworkPath\WPF\PresentationCore.dll",
@@ -101,4 +101,18 @@ if ($MonitorTests) { & (Join-Path $projectRoot 'tests\MonitorTests.ps1') }
 
 if ($Package) {
     & (Join-Path $projectRoot 'package.ps1')
+}
+
+if ($CaptureTests) {
+    & $compilerPath /nologo /target:exe /platform:x64 /codepage:65001 "/out:$buildPath\CaptureTests.exe" /main:ScreenLine.Tests.CaptureTests "/win32manifest:$manifestPath" "/resource:$iconPath,PicRope.Icon" $basketResources $references $sources (Join-Path $projectRoot 'tests\CaptureTests.cs')
+    if ($LASTEXITCODE -ne 0) { throw '截图测试构建失败' }
+    & (Join-Path $buildPath 'CaptureTests.exe')
+    if ($LASTEXITCODE -ne 0) { throw '截图测试未通过' }
+}
+
+if ($ShortcutUiTests) {
+    & $compilerPath /nologo /target:exe /platform:x64 /codepage:65001 "/out:$buildPath\ShortcutUiTests.exe" /main:ScreenLine.Tests.ShortcutUiTests "/win32manifest:$manifestPath" "/resource:$iconPath,PicRope.Icon" $basketResources $references $sources (Join-Path $projectRoot 'tests\ShortcutUiTests.cs')
+    if ($LASTEXITCODE -ne 0) { throw '快捷键界面测试构建失败' }
+    & (Join-Path $buildPath 'ShortcutUiTests.exe')
+    if ($LASTEXITCODE -ne 0) { throw '快捷键界面测试未通过' }
 }

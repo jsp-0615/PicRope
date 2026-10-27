@@ -18,12 +18,14 @@ namespace ScreenLine
         public bool AutoHang { get; set; }
         public string Theme { get; set; }
         public string DisplayDevice { get; set; }
+        public int CaptureHotkeyKey { get; set; }
+        public int CaptureHotkeyModifiers { get; set; }
         public string LastUpdateNotification { get; set; }
         public List<string> Images { get; set; }
         public List<string> Collection { get; set; }
         public List<TextItem> Texts { get; set; }
 
-        public SavedState() { Images = new List<string>(); Collection = new List<string>(); Texts = new List<TextItem>(); Theme = "classic"; AutoHang = true; }
+        public SavedState() { Images = new List<string>(); Collection = new List<string>(); Texts = new List<TextItem>(); Theme = "classic"; AutoHang = true; CaptureHotkeyKey = 112; }
     }
 
     internal sealed class StateStore

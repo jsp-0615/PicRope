@@ -178,6 +178,25 @@ namespace ScreenLine
             catch (UnauthorizedAccessException) { return false; }
         }
 
+        public async Task<CaptureItem> AddScreenCapture(byte[] png, Point origin)
+        {
+            ImageContent content = await Task.Run(() => ImageContent.Decode(png));
+            if (disposed) return null;
+            Directory.CreateDirectory(gallery.Store.Inbox);
+            string path = Path.Combine(gallery.Store.Inbox, "截图_" + DateTime.Now.ToString("yyyyMMdd_HHmmss_fff") + "_" + Guid.NewGuid().ToString("N").Substring(0, 8) + ".png");
+            await Task.Run(() => File.WriteAllBytes(path, png));
+            if (disposed) return null;
+            CaptureItem item;
+            if (!AutoHang) item = gallery.Collect(path, content);
+            else
+            {
+                gallery.Add(path, content);
+                item = gallery.Items[gallery.Items.Count - 1];
+                if (Arrived != null) Arrived(item, origin);
+            }
+            return item;
+        }
+
         public void Hang(CaptureItem item)
         {
             if (disposed || gallery.Contains(item.Path)) return;

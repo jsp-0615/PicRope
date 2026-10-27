@@ -69,6 +69,7 @@ namespace ScreenLine
         double lastScrollOffset;
         bool rendering;
         bool pinned, previousDown, suppressEdge;
+        string captureShortcut;
         string viewingName;
         IntPtr viewingWindow;
         DateTime viewerSearchUntil;
@@ -301,7 +302,9 @@ namespace ScreenLine
             }
             hint.Visibility = gallery.Items.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
             helpTitle.Text = gallery.Store.State.AutoHang ? "截图会挂在这里" : "从图片篮子里挑几张挂上";
-            helpDetail.Text = gallery.Store.State.AutoHang ? "Win + PrtScn · 或开启剪贴板截图收集" : "截图会先收好，需要时再挂上绳子";
+            helpDetail.Text = gallery.Store.State.AutoHang
+                ? (string.IsNullOrEmpty(captureShortcut) ? "从托盘菜单开始截图" : "按 " + captureShortcut + " 截图 · 随手收集灵感")
+                : "截图会先收好，需要时再挂上绳子";
             openBasket.Visibility = gallery.Store.State.AutoHang ? Visibility.Collapsed : Visibility.Visible;
             int pending = gallery.Collected.Count(i => !gallery.Contains(i.Path));
             if (pending > pendingPictures && Revealed && !flights.Any(flight => flight.Collecting || flight.Falling)) BasketReceived();
@@ -530,6 +533,8 @@ namespace ScreenLine
             }
             catch (Exception error) { gallery.Store.Log(error); card.ResetClip(); }
         }
+
+        internal void SetCaptureShortcut(string shortcut) { captureShortcut = shortcut; Update(); }
 
         public void Reveal(bool shown, bool pin, double seconds)
         {

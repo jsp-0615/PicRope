@@ -41,6 +41,7 @@ namespace ScreenLine
         internal BasketWindow Basket { get; private set; }
         internal TextWindow TextWindow { get; private set; }
         internal readonly List<ImageEditorWindow> Editors = new List<ImageEditorWindow>();
+        readonly List<PinnedImageWindow> capturePins = new List<PinnedImageWindow>();
         readonly AppUpdates updates = new AppUpdates();
         readonly CancellationTokenSource updateLifetime = new CancellationTokenSource();
         readonly DispatcherTimer updateTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(15) };
@@ -48,7 +49,10 @@ namespace ScreenLine
         readonly bool automaticUpdates;
         UpdateRelease availableUpdate;
         UpdateWindow updateWindow;
-        bool checkingUpdates, disposed;
+        CaptureShortcutWindow captureSettings;
+        ScreenCapture screenCapture;
+        MenuItem captureMenu;
+        bool checkingUpdates, disposed, capturePreparing;
         uint textClipboardSequence;
         int textClipboardVersion;
         const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
@@ -65,6 +69,10 @@ namespace ScreenLine
             Texts.Changed += Shelf.UpdateTexts;
             events = new WindowsEvents();
             events.ToggleRequested += Shelf.Toggle;
+            events.CaptureRequested += StartScreenCapture;
+            if (!CaptureShortcutWindow.Valid(store.State.CaptureHotkeyKey, store.State.CaptureHotkeyModifiers))
+            { store.State.CaptureHotkeyKey = 112; store.State.CaptureHotkeyModifiers = 0; }
+            bool captureAvailable = events.SetCaptureShortcut(store.State.CaptureHotkeyKey, store.State.CaptureHotkeyModifiers);
             events.ExitRequested += Exit;
             events.ClipboardChanged += Captures.ClipboardChanged;
             textClipboardSequence = WindowsNative.GetClipboardSequenceNumber();
@@ -97,6 +105,11 @@ namespace ScreenLine
             });
             TrayMenu.OnAction(TrayMenu.AppearanceButton, ShowAppearance);
             var more = TrayMenu.MoreMenu;
+            captureMenu = more.AddAction("区域截图", "picture", StartScreenCapture);
+            UpdateCaptureMenu();
+            more.AddAction("截图快捷键设置…", "more", ShowCaptureSettings);
+            more.Separator();
+            if (!captureAvailable) Notice("截图快捷键 " + CaptureShortcutWindow.Format(store.State.CaptureHotkeyKey, store.State.CaptureHotkeyModifiers) + " 已被占用，请在更多操作中修改。");
             more.AddAction("添加图片…", "add", async delegate
             {
                 var picker = new OpenFileDialog { Title = "添加图片", Filter = "图片|*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.tif;*.tiff", Multiselect = true };
@@ -187,6 +200,82 @@ namespace ScreenLine
             });
             updateWindow.Closed += delegate { updateWindow = null; };
             updateWindow.Show();
+        }
+
+        void UpdateCaptureMenu()
+        {
+            captureMenu.InputGestureText = events.CaptureShortcutAvailable
+                ? CaptureShortcutWindow.Format(Gallery.Store.State.CaptureHotkeyKey, Gallery.Store.State.CaptureHotkeyModifiers) : "未注册";
+            Shelf.SetCaptureShortcut(events.CaptureShortcutAvailable ? captureMenu.InputGestureText : null);
+        }
+
+        void ShowCaptureSettings()
+        {
+            if (captureSettings != null) { captureSettings.Activate(); return; }
+            captureSettings = new CaptureShortcutWindow(Gallery.Store.State.CaptureHotkeyKey, Gallery.Store.State.CaptureHotkeyModifiers, SaveCaptureShortcut);
+            captureSettings.Closed += delegate { captureSettings = null; };
+            captureSettings.Show();
+        }
+
+        string SaveCaptureShortcut(int key, int modifiers)
+        {
+            if (!CaptureShortcutWindow.Valid(key, modifiers)) return "请选择有效的快捷键。";
+            var state = Gallery.Store.State;
+            int oldKey = state.CaptureHotkeyKey, oldModifiers = state.CaptureHotkeyModifiers;
+            bool oldAvailable = events.CaptureShortcutAvailable;
+            if (!events.SetCaptureShortcut(key, modifiers)) return "该快捷键已被占用，请选择其他组合。";
+            state.CaptureHotkeyKey = key; state.CaptureHotkeyModifiers = modifiers;
+            try { Gallery.Store.Save(); }
+            catch (Exception error)
+            {
+                state.CaptureHotkeyKey = oldKey; state.CaptureHotkeyModifiers = oldModifiers;
+                if (!oldAvailable || !events.SetCaptureShortcut(oldKey, oldModifiers)) events.ClearCaptureShortcut();
+                UpdateCaptureMenu();
+                return "无法保存设置：" + error.Message;
+            }
+            UpdateCaptureMenu(); return null;
+        }
+
+        async void StartScreenCapture()
+        {
+            if (disposed || capturePreparing || screenCapture != null) return;
+            capturePreparing = true;
+            try
+            {
+                TrayMenu.Close();
+                await Task.Delay(120); // Let the tray menus disappear before capturing the desktop.
+                if (disposed) return;
+                screenCapture = new ScreenCapture(async delegate(byte[] png, Point origin, CaptureResult result)
+                {
+                    try
+                    {
+                        CaptureItem item = await Captures.AddScreenCapture(png, origin);
+                        if (disposed || item == null) return;
+                        using (var input = new MemoryStream(png))
+                        {
+                            var image = BitmapDecoder.Create(input, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad).Frames[0];
+                            var payload = new DataObject(); payload.SetImage(image); payload.SetData("PNG", new MemoryStream(png));
+                            try { await WindowsClipboard.Write(payload); Captures.IgnoreCurrentClipboard(); }
+                            catch (Exception error) { Gallery.Store.Log(error); Notice("截图已保存，但无法复制到剪贴板。"); }
+                            if (result == CaptureResult.Pin && !disposed)
+                            {
+                                var rect = new Rect(origin.X - 60, origin.Y - 40, 120, 80);
+                                var pin = new PinnedImageWindow(item, rect, 0, image, Shelf.Appearance, 0);
+                                capturePins.Add(pin); pin.Closed += delegate { capturePins.Remove(pin); }; pin.Show();
+                            }
+                        }
+                    }
+                    catch (Exception error) { Gallery.Store.Log(error); Notice("无法保存截图：" + error.Message); }
+                });
+                screenCapture.Finished += delegate { screenCapture = null; };
+                screenCapture.Show();
+            }
+            catch (Exception error)
+            {
+                if (screenCapture != null) screenCapture.Dispose();
+                Gallery.Store.Log(error); Notice("无法开始截图：" + error.Message);
+            }
+            finally { capturePreparing = false; }
         }
 
         void EnableClipboard()
@@ -359,6 +448,9 @@ namespace ScreenLine
             if (Basket != null) Basket.Close();
             if (TextWindow != null) TextWindow.Close();
             if (Appearance != null) Appearance.Close();
+            if (captureSettings != null) captureSettings.Close();
+            if (screenCapture != null) screenCapture.Dispose();
+            foreach (var pin in capturePins.ToArray()) pin.Close();
             if (notice != null) notice.Close();
             foreach (var editor in Editors.ToArray()) editor.CloseWithoutPrompt();
             TrayMenu.Close();

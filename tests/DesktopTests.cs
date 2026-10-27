@@ -1785,7 +1785,7 @@ namespace ScreenLine.Tests
             Point bottomRight = trayMenu.PointToScreen(new Point(trayMenu.ActualWidth, trayMenu.ActualHeight));
             Check(topLeft.X >= screen.Bounds.Left && topLeft.Y >= screen.Bounds.Top
                 && bottomRight.X <= screen.Bounds.Right + 1 && bottomRight.Y <= screen.Bounds.Bottom + 1, "屏幕右下角的托盘菜单完整显示，没有超出屏幕");
-            Check(trayMenu.MoreMenu.Items.OfType<MenuItem>().Count(x => x.IsEnabled) == 5, "更多操作保留添加、文件夹、全部取下、开机启动和更新入口");
+            Check(new[] { "区域截图", "截图快捷键设置…", "添加图片…", "打开收集文件夹", "全部取下（保留文件）", "开机启动", "检查更新…" }.All(title => trayMenu.MoreMenu.Items.OfType<MenuItem>().Any(item => item.IsEnabled && item.Header as string == title)), "更多操作包含截图、快捷键设置和原有入口");
             Check(trayMenu.ScreenButton.IsVisible && trayMenu.ScreenMode.Text == "跟随鼠标", "显示屏幕入口直接呈现当前模式");
             await ClickMenu(trayMenu.ScreenButton);
             await Until(() => trayMenu.ScreenMenu.IsOpen && trayMenu.ScreenMenu.ActualHeight > 0);

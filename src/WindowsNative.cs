@@ -131,6 +131,10 @@ namespace ScreenLine
     {
         readonly HwndSource source;
         public readonly bool ShortcutAvailable;
+        int captureId;
+        int captureKey, captureModifiers;
+        public bool CaptureShortcutAvailable { get { return captureId != 0; } }
+        public event Action CaptureRequested;
         public event Action ClipboardChanged;
         public event Action ToggleRequested;
         public event Action ExitRequested;
@@ -143,10 +147,27 @@ namespace ScreenLine
             ShortcutAvailable = WindowsNative.RegisterHotKey(source.Handle, 1, 0x4003, (uint)'T');
         }
 
+        public bool SetCaptureShortcut(int key, int modifiers)
+        {
+            if (captureId != 0 && key == captureKey && modifiers == captureModifiers) return true;
+            int next = captureId == 2 ? 3 : 2;
+            if (!WindowsNative.RegisterHotKey(source.Handle, next, (uint)(modifiers | 0x4000), (uint)key)) return false;
+            if (captureId != 0) WindowsNative.UnregisterHotKey(source.Handle, captureId);
+            captureId = next; captureKey = key; captureModifiers = modifiers;
+            return true;
+        }
+
+        public void ClearCaptureShortcut()
+        {
+            if (captureId != 0) WindowsNative.UnregisterHotKey(source.Handle, captureId);
+            captureId = 0;
+        }
+
         IntPtr Receive(IntPtr window, int message, IntPtr w, IntPtr l, ref bool handled)
         {
             if (message == 0x031D && ClipboardChanged != null) ClipboardChanged();
-            if ((message == 0x0312 || message == WindowsNative.ShowMessage) && ToggleRequested != null) ToggleRequested();
+            if ((message == WindowsNative.ShowMessage || (message == 0x0312 && w.ToInt32() == 1)) && ToggleRequested != null) ToggleRequested();
+            if (message == 0x0312 && captureId != 0 && w.ToInt32() == captureId && CaptureRequested != null) CaptureRequested();
             if (message == WindowsNative.ExitMessage && ExitRequested != null) ExitRequested();
             return IntPtr.Zero;
         }
@@ -155,6 +176,7 @@ namespace ScreenLine
         {
             WindowsNative.RemoveClipboardFormatListener(source.Handle);
             if (ShortcutAvailable) WindowsNative.UnregisterHotKey(source.Handle, 1);
+            ClearCaptureShortcut();
             source.Dispose();
         }
     }

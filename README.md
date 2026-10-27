@@ -37,7 +37,7 @@ PicRope 将截图暂存在屏幕上沿，单击复制、拖拽取用，也可以
 ## 开始使用
 
 1. 从 [Releases 下载最新版](https://github.com/Renly1994/PicRope/releases/latest)，完整解压后运行 `Install.cmd`。
-2. 启动图绳，用 `Win+PrtScn` 截图。保存到 Windows 截图文件夹的新图片会自动挂上。
+2. 启动图绳，按 `F1` 并拖动鼠标选择任意矩形区域，使用选区下方工具栏标注、保存或贴图；按 `Enter` 完成并复制，按 `Esc` 或单击鼠标右键取消。也可以用 `Win+PrtScn` 截图，保存到 Windows 截图文件夹的新图片会自动挂上。
 3. 将鼠标移到屏幕上沿展开绳子，单击图片复制，或拖拽到需要的应用。
 
 **系统要求：** Windows 10 / 11 64 位、.NET Framework 4.8；内置编辑器需要 [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/)。
@@ -49,6 +49,7 @@ PicRope 将截图暂存在屏幕上沿，单击复制、拖拽取用，也可以
 
 | 操作 | 方式 |
 | --- | --- |
+| 区域截图 | `F1`，拖动选择区域；可调整选区，添加矩形、椭圆、箭头、画笔、马赛克、文字和表情，支持撤销、保存、复制和贴图；在托盘右键 →「更多操作」→「截图快捷键设置」修改快捷键 |
 | 显示 / 收起 | `Ctrl+Alt+T`，或单击托盘图标 |
 | 打开图片 | 双击图片，使用系统默认图片应用 |
 | 编辑图片 | 长按图片，或图片右键 →「编辑」 |
