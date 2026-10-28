@@ -62,6 +62,17 @@ namespace ScreenLine.Tests
                 SendMessage(source.Handle, 0x0312, new IntPtr(1), IntPtr.Zero);
                 Check(capture == 1 && toggle == 1, "冲突后原快捷键仍有效，截图和显示快捷键分开处理");
             }
+            using (var bitmap = new Drawing.Bitmap(2, 2))
+            {
+                bitmap.SetPixel(0, 0, Drawing.Color.FromArgb(255, 12, 34, 56));
+                bitmap.SetPixel(1, 0, Drawing.Color.FromArgb(255, 200, 70, 10));
+                bitmap.SetPixel(0, 1, Drawing.Color.FromArgb(0, 0, 0, 0));
+                var converted = CaptureRendering.FromDesktopBitmap(bitmap);
+                var rgb = new FormatConvertedBitmap(converted, PixelFormats.Bgr32, null, 0);
+                var pixels = new byte[16]; rgb.CopyPixels(pixels, 8, 0);
+                Check(converted.IsFrozen && pixels[0] == 56 && pixels[1] == 34 && pixels[2] == 12 && pixels[4] == 10 && pixels[5] == 70 && pixels[6] == 200 && pixels[8] == 0 && pixels[9] == 0 && pixels[10] == 0,
+                    "直接转换桌面位图保留像素及透明黑色并可在释放内存锁后使用");
+            }
             var savedCursor = WindowsNative.Cursor();
             var savedFocus = WindowsNative.GetForegroundWindow();
             ScreenCapture screenCapture = null;
@@ -83,6 +94,9 @@ namespace ScreenLine.Tests
                     count++;
                 }
                 Check(positioned && count == System.Windows.Forms.Screen.AllScreens.Length, "截图蒙层覆盖每块屏幕的实际像素范围");
+                bool deferred = true;
+                foreach (Window overlay in overlays) deferred &= overlay.GetType().GetField("toolbar", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(overlay) == null;
+                Check(deferred, "选择区域前不创建编辑工具栏");
                 SetCursorPos(monitor.Left + 20, monitor.Top + 20); await Task.Delay(80);
                 mouse_event(2, 0, 0, 0, UIntPtr.Zero); await Task.Delay(80);
                 SetCursorPos(monitor.Left + 70, monitor.Top + 60); await Task.Delay(80);
@@ -90,6 +104,9 @@ namespace ScreenLine.Tests
                 Check(actualPng == null && screenCapture.Selection.Width == 50 && screenCapture.Selection.Height == 40, "拖动后保留选区等待编辑（" + screenCapture.Selection.ToString() + "）");
                 var owner = (Window)typeof(ScreenCapture).GetField("toolbarOwner", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(screenCapture);
                 var buttons = (System.Collections.Generic.Dictionary<CaptureTool, Button>)owner.GetType().GetField("toolButtons", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(owner);
+                int createdToolbars = 0;
+                foreach (Window overlay in overlays) if (overlay.GetType().GetField("toolbar", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(overlay) != null) createdToolbars++;
+                Check(createdToolbars == 1, "完成选区后只在当前屏幕创建工具栏");
                 var palettes = (System.Collections.Generic.List<Popup>)owner.GetType().GetField("palettes", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(owner);
                 await ClickControl(buttons[CaptureTool.Emoji]);
                 Check(palettes[0].IsOpen, "表情图标打开表情面板");

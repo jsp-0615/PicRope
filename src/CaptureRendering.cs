@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -66,6 +67,28 @@ namespace ScreenLine
 
     internal static class CaptureRendering
     {
+        internal static BitmapSource FromDesktopBitmap(System.Drawing.Bitmap bitmap)
+        {
+            var bounds = new System.Drawing.Rectangle(0, 0, bitmap.Width, bitmap.Height);
+            var data = bitmap.LockBits(bounds, System.Drawing.Imaging.ImageLockMode.ReadOnly, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            try
+            {
+                int stride = Math.Abs(data.Stride);
+                BitmapSource image;
+                if (data.Stride > 0)
+                    image = BitmapSource.Create(bitmap.Width, bitmap.Height, 96, 96, PixelFormats.Bgr32, null, data.Scan0, checked(stride * bitmap.Height), stride);
+                else
+                {
+                    var pixels = new byte[checked(stride * bitmap.Height)];
+                    for (int row = 0; row < bitmap.Height; row++) Marshal.Copy(IntPtr.Add(data.Scan0, row * data.Stride), pixels, row * stride, stride);
+                    image = BitmapSource.Create(bitmap.Width, bitmap.Height, 96, 96, PixelFormats.Bgr32, null, pixels, stride);
+                }
+                image.Freeze();
+                return image;
+            }
+            finally { bitmap.UnlockBits(data); }
+        }
+
         public static BitmapSource Pixelate(BitmapSource source)
         {
             int width = Math.Max(1, source.PixelWidth / 12), height = Math.Max(1, source.PixelHeight / 12);

@@ -70,6 +70,7 @@ namespace ScreenLine
             transform.Children.Add(zoom); transform.Children.Add(turn); transform.Children.Add(paperLift);
             Frame.RenderTransform = transform;
             Frame.Cursor = Cursors.SizeAll;
+            Frame.ToolTip = "拖动移动 · 双击关闭贴图";
             photo.Stretch = Stretch.Uniform;
             photo.SizeChanged += delegate { photo.Clip = new RectangleGeometry(new Rect(0, 0, photo.ActualWidth, photo.ActualHeight), 7, 7); };
             var layer = new Grid();
@@ -96,6 +97,11 @@ namespace ScreenLine
             Frame.MouseLeftButtonDown += delegate(object sender, MouseButtonEventArgs e)
             {
                 e.Handled = true;
+                if (returning) return;
+                if (e.ClickCount >= 2)
+                {
+                    moving = false; Frame.ReleaseMouseCapture(); Close(); return;
+                }
                 moving = true;
                 var cursor = WindowsNative.Cursor();
                 moveStart = new Point(cursor.X, cursor.Y);

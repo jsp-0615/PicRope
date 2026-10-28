@@ -23,6 +23,7 @@ namespace ScreenLine
         readonly List<CaptureOverlay> windows = new List<CaptureOverlay>();
         readonly List<CaptureAnnotation> annotations = new List<CaptureAnnotation>();
         readonly Action<byte[], Point, CaptureResult> completed;
+        readonly Func<WindowsNative.Point> cursor;
         public event Action Finished;
         BitmapSource snapshot, mosaic;
         Drawing.Rectangle selection, original;
@@ -37,18 +38,16 @@ namespace ScreenLine
         internal Drawing.Rectangle Selection { get { return selection; } }
         internal IList<CaptureAnnotation> Annotations { get { return annotations.AsReadOnly(); } }
 
-        public ScreenCapture(Action<byte[], Point, CaptureResult> completed)
+        public ScreenCapture(Action<byte[], Point, CaptureResult> completed) : this(completed, WindowsNative.Cursor) { }
+        internal ScreenCapture(Action<byte[], Point, CaptureResult> completed, Func<WindowsNative.Point> cursor)
         {
             this.completed = completed;
+            this.cursor = cursor;
             using (var bitmap = new Drawing.Bitmap(desktop.Width, desktop.Height))
             {
                 using (var graphics = Drawing.Graphics.FromImage(bitmap))
                     graphics.CopyFromScreen(desktop.Left, desktop.Top, 0, 0, desktop.Size, Drawing.CopyPixelOperation.SourceCopy);
-                using (var stream = new MemoryStream())
-                {
-                    bitmap.Save(stream, Drawing.Imaging.ImageFormat.Png); stream.Position = 0;
-                    snapshot = BitmapFrame.Create(stream, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad); snapshot.Freeze();
-                }
+                snapshot = CaptureRendering.FromDesktopBitmap(bitmap);
             }
         }
         public void Show()
@@ -62,7 +61,7 @@ namespace ScreenLine
                     var window = new CaptureOverlay(this, bounds, part);
                     windows.Add(window); window.Show();
                 }
-                var activeWindow = WindowAt(WindowsNative.Cursor());
+                var activeWindow = WindowAt(cursor());
                 if (activeWindow != null) { activeWindow.Activate(); activeWindow.Focus(); }
             }
             catch { Dispose(); throw; }
@@ -73,7 +72,7 @@ namespace ScreenLine
         }
         internal void Begin(CaptureOverlay overlay)
         {
-            CommitText(); start = WindowsNative.Cursor(); original = selection; active = null;
+            CommitText(); start = cursor(); original = selection; active = null;
             if (selection.IsEmpty) dragMode = "new";
             else if (tool == CaptureTool.Select) dragMode = HitSelection(start, 10 * WindowsNative.MonitorScale(Forms.Screen.FromPoint(new Drawing.Point(start.X, start.Y))));
             else if (!selection.Contains(start.X, start.Y)) return;
@@ -94,7 +93,7 @@ namespace ScreenLine
         internal void Move()
         {
             if (!dragging) return;
-            var point = WindowsNative.Cursor();
+            var point = cursor();
             if (dragMode == "new") selection = Bounds(start, point, desktop);
             else if (dragMode == "move")
             {
@@ -120,7 +119,7 @@ namespace ScreenLine
             Move(); dragging = false; overlay.ReleasePointer();
             if (selection.Width < 2 || selection.Height < 2) { selection = Drawing.Rectangle.Empty; annotations.Clear(); }
             if (active != null && active.Tool != CaptureTool.Pen && active.Tool != CaptureTool.Mosaic && (active.Points.Count < 2 || (active.Points[1] - active.Points[0]).Length < 2)) annotations.Remove(active);
-            active = null; toolbarOwner = selection.IsEmpty ? null : WindowAt(WindowsNative.Cursor()); Refresh();
+            active = null; toolbarOwner = selection.IsEmpty ? null : WindowAt(cursor()); Refresh();
         }
         internal void SetTool(CaptureTool value) { CommitText(); tool = value; Refresh(); }
         internal void SetColor(Color value) { color = value; }
@@ -195,11 +194,11 @@ namespace ScreenLine
             readonly ScreenCapture capture;
             readonly Canvas canvas;
             readonly PreviewLayer preview;
-            readonly Border toolbar;
-            static readonly Style buttonStyle = (Style)XamlReader.Parse(@"<Style xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' xmlns:x='http://schemas.microsoft.com/winfx/2006/xaml' TargetType='Button'>
+            Border toolbar;
+            static readonly Lazy<Style> buttonStyle = new Lazy<Style>(delegate { return (Style)XamlReader.Parse(@"<Style xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' xmlns:x='http://schemas.microsoft.com/winfx/2006/xaml' TargetType='Button'>
   <Setter Property='Foreground' Value='#35404B'/><Setter Property='Background' Value='Transparent'/><Setter Property='BorderThickness' Value='0'/><Setter Property='FocusVisualStyle' Value='{x:Null}'/>
   <Setter Property='Template'><Setter.Value><ControlTemplate TargetType='Button'><Border x:Name='surface' Background='{TemplateBinding Background}' CornerRadius='5'><ContentPresenter HorizontalAlignment='Center' VerticalAlignment='Center'/></Border><ControlTemplate.Triggers><Trigger Property='IsMouseOver' Value='True'><Setter TargetName='surface' Property='Background' Value='#EAF2FA'/></Trigger><Trigger Property='IsPressed' Value='True'><Setter TargetName='surface' Property='Background' Value='#D7E8F7'/></Trigger><Trigger Property='IsKeyboardFocused' Value='True'><Setter TargetName='surface' Property='BorderBrush' Value='#79A3C7'/><Setter TargetName='surface' Property='BorderThickness' Value='1'/></Trigger></ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter>
-</Style>");
+</Style>"); });
             readonly Dictionary<CaptureTool, Button> toolButtons = new Dictionary<CaptureTool, Button>();
             readonly List<Popup> palettes = new List<Popup>();
             Ellipse colorIndicator;
@@ -220,7 +219,7 @@ namespace ScreenLine
                 grid.Children.Add(new Border { Background = new SolidColorBrush(Color.FromArgb(125, 0, 0, 0)), IsHitTestVisible = false });
                 preview = new PreviewLayer(this) { IsHitTestVisible = false }; grid.Children.Add(preview);
                 canvas = new Canvas { Background = Brushes.Transparent };
-                toolbar = CreateToolbar(); toolbar.Visibility = Visibility.Collapsed; canvas.Children.Add(toolbar); grid.Children.Add(canvas);
+                grid.Children.Add(canvas);
                 var hint = new TextBlock { Text = "拖动选择截图区域 · Esc 取消", Foreground = Brushes.White, FontSize = 14, Margin = new Thickness(20), VerticalAlignment = VerticalAlignment.Top, IsHitTestVisible = false };
                 grid.Children.Add(hint); Content = grid;
                 SourceInitialized += delegate { WindowsNative.SetWindowPos(new WindowInteropHelper(this).Handle, new IntPtr(-1), bounds.Left, bounds.Top, bounds.Width, bounds.Height, 0x10); };
@@ -259,7 +258,7 @@ namespace ScreenLine
                 foreach (string face in new[] { "😀", "😂", "😍", "👍", "❤️", "⭐", "❗", "✅" })
                 {
                     string selectedFace = face;
-                    var option = new Button { Style = buttonStyle, Content = face, FontFamily = new FontFamily("Segoe UI Emoji"), FontSize = 20, Width = 40, Height = 38, Margin = new Thickness(2), ToolTip = "添加表情 " + face, Cursor = Cursors.Hand };
+                    var option = new Button { Style = buttonStyle.Value, Content = face, FontFamily = new FontFamily("Segoe UI Emoji"), FontSize = 20, Width = 40, Height = 38, Margin = new Thickness(2), ToolTip = "添加表情 " + face, Cursor = Cursors.Hand };
                     System.Windows.Automation.AutomationProperties.SetName(option, "添加表情 " + face);
                     option.Click += delegate { capture.SetEmoji(selectedFace); emojiPopup.IsOpen = false; };
                     faces.Children.Add(option);
@@ -278,7 +277,7 @@ namespace ScreenLine
                 {
                     Color value = colorValues[i]; string name = colorNames[i];
                     var swatch = new Ellipse { Width = 18, Height = 18, Fill = new SolidColorBrush(value), Stroke = LightTheme.Brush("#C5CED8"), StrokeThickness = 1 };
-                    var option = new Button { Style = buttonStyle, Content = swatch, Width = 29, Height = 30, ToolTip = name, Cursor = Cursors.Hand };
+                    var option = new Button { Style = buttonStyle.Value, Content = swatch, Width = 29, Height = 30, ToolTip = name, Cursor = Cursors.Hand };
                     System.Windows.Automation.AutomationProperties.SetName(option, name);
                     option.Click += delegate { capture.SetColor(value); colorIndicator.Fill = new SolidColorBrush(value); colorPopup.IsOpen = false; };
                     colors.Children.Add(option);
@@ -296,7 +295,7 @@ namespace ScreenLine
                     var line = new System.Windows.Shapes.Line { X1 = 1, X2 = 19, Y1 = 9, Y2 = 9, Stroke = LightTheme.Brush("#45535F"), StrokeThickness = size, StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round };
                     var surface = new Canvas { Width = 20, Height = 18 }; surface.Children.Add(line);
                     string name = size == 2 ? "细" : size == 3 ? "中" : "粗";
-                    var option = new Button { Style = buttonStyle, Content = surface, Width = 34, Height = 32, ToolTip = name, Cursor = Cursors.Hand };
+                    var option = new Button { Style = buttonStyle.Value, Content = surface, Width = 34, Height = 32, ToolTip = name, Cursor = Cursors.Hand };
                     System.Windows.Automation.AutomationProperties.SetName(option, name);
                     option.Click += delegate { capture.SetWidth(selectedSize); widthIndicator.StrokeThickness = selectedSize; widthPopup.IsOpen = false; };
                     widths.Children.Add(option);
@@ -330,7 +329,7 @@ namespace ScreenLine
             }
             static Button AddButton(Panel row, string icon, string tip, Action action)
             {
-                var button = new Button { Content = ToolbarIcon(icon), ToolTip = tip, Style = buttonStyle, Width = 34, Height = 34, Margin = new Thickness(1, 0, 1, 0), Cursor = Cursors.Hand };
+                var button = new Button { Content = ToolbarIcon(icon), ToolTip = tip, Style = buttonStyle.Value, Width = 34, Height = 34, Margin = new Thickness(1, 0, 1, 0), Cursor = Cursors.Hand };
                 System.Windows.Automation.AutomationProperties.SetName(button, tip);
                 button.Click += delegate { action(); }; row.Children.Add(button); return button;
             }
@@ -380,6 +379,12 @@ namespace ScreenLine
             internal void Refresh(Drawing.Rectangle rect, bool showToolbar, CaptureTool selectedTool)
             {
                 preview.InvalidateVisual();
+                if (toolbar == null)
+                {
+                    if (!showToolbar) return;
+                    toolbar = CreateToolbar();
+                    canvas.Children.Add(toolbar);
+                }
                 foreach (var pair in toolButtons) pair.Value.Background = pair.Key == selectedTool ? LightTheme.Brush("#DCEEFF") : Brushes.Transparent;
                 toolbar.Visibility = showToolbar ? Visibility.Visible : Visibility.Collapsed;
                 if (!showToolbar) { foreach (var popup in palettes) popup.IsOpen = false; return; }

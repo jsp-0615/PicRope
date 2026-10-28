@@ -242,8 +242,9 @@ namespace ScreenLine
             capturePreparing = true;
             try
             {
+                bool menuWasOpen = TrayMenu.IsOpen || TrayMenu.MoreMenu.IsOpen || TrayMenu.ScreenMenu.IsOpen;
                 TrayMenu.Close();
-                await Task.Delay(120); // Let the tray menus disappear before capturing the desktop.
+                if (menuWasOpen) await Task.Delay(120); // Let visible tray menus disappear before capturing.
                 if (disposed) return;
                 screenCapture = new ScreenCapture(async delegate(byte[] png, Point origin, CaptureResult result)
                 {

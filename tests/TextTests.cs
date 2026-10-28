@@ -224,22 +224,22 @@ namespace ScreenLine.Tests
             shelf.Reveal(true, true, 60); shelf.ChoosingTexts = true;
             await Task.Delay(450); Open();
 
-            for (int i = 0; i < 1200; i++) store.State.Texts.Add(new TextItem { Id = Guid.NewGuid().ToString("N"), Content = "归档文字 " + i, CreatedUtc = DateTime.UtcNow.AddMinutes(-i) });
+            for (int i = 0; i < 16; i++) store.State.Texts.Add(new TextItem { Id = Guid.NewGuid().ToString("N"), Content = "归档文字 " + i, CreatedUtc = DateTime.UtcNow.AddMinutes(-i) });
             store.Save(); shelf.UpdateTexts(); window.Close(); Open(); window.UpdateLayout();
             int realized = Children<ListBoxItem>(window.List).Count();
-            Check(window.VisibleCount == 1204 && realized < 25, "大量记录使用虚拟列表，仅创建可见行");
+            Check(window.VisibleCount == 20 && realized < 25, "最多 20 条记录时列表正常呈现");
             var last = controller.Texts.Items.Last();
             window.List.ScrollIntoView(last); await Task.Delay(100); window.UpdateLayout();
             var lastRow = (ListBoxItem)window.List.ItemContainerGenerator.ContainerFromIndex(window.List.Items.Count - 1);
-            Check(lastRow != null && ((TextItem)lastRow.DataContext).Id == last.Id, "长列表可滚到最后一条，回收行仍绑定正确内容");
+            Check(lastRow != null && ((TextItem)lastRow.DataContext).Id == last.Id, "列表可滚到最后一条，回收行仍绑定正确内容");
             Children<Button>(lastRow).Single(button => (string)button.Tag == "delete").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-            Check(!controller.Texts.Items.Contains(last) && controller.Texts.Items.Count == 1203, "滚动后的删除作用于当前记录，数量正确");
+            Check(!controller.Texts.Items.Contains(last) && controller.Texts.Items.Count == 19, "滚动后的删除作用于当前记录，数量正确");
             window.Search.Text = "相机存储卡"; window.UpdateLayout();
-            Check(window.VisibleCount == 1, "长列表滚动后搜索可以回到匹配结果");
+            Check(window.VisibleCount == 1, "列表滚动后搜索可以回到匹配结果");
             var row = (ListBoxItem)window.List.ItemContainerGenerator.ContainerFromIndex(0);
             Check(row != null, "搜索后不会停留在无内容的旧滚动位置");
             window.Close();
-            Check(new TextCollection(new StateStore(store.Root)).Items.Count == 1203 && !File.Exists(Path.Combine(store.Root, "error.log")), "文字记录可重启恢复，操作过程无运行错误");
+            Check(new TextCollection(new StateStore(store.Root)).Items.Count == 19 && !File.Exists(Path.Combine(store.Root, "error.log")), "文字记录可重启恢复，操作过程无运行错误");
             controller.ShowTexts(); await Task.Delay(80);
             Check(controller.TextWindow != null && shelf.ChoosingTexts, "固定入口打开真实文字窗口并保持绳子展开");
             controller.ShowTexts();
@@ -248,11 +248,11 @@ namespace ScreenLine.Tests
             await controller.Start();
             textSwitch = controller.TrayMenu.Text;
             Check(textSwitch.IsChecked == true, "重启后恢复文字收集开关");
-            await WriteText("重启后的文字自动收集"); await Until(() => controller.Texts.Items.Count == 1204);
+            await WriteText("重启后的文字自动收集"); await Until(() => controller.Texts.Items.Count == 20);
             Check(controller.Texts.Items[0].Content == "重启后的文字自动收集", "信封关闭时复制文字也能自动收集");
             textSwitch.IsChecked = false;
             await WriteText("关闭开关后不收集"); await Task.Delay(180);
-            Check(controller.Texts.Items.Count == 1204 && !new StateStore(store.Root).State.CollectTextClipboard,
+            Check(controller.Texts.Items.Count == 20 && !new StateStore(store.Root).State.CollectTextClipboard,
                 "关闭后立即停止收集，保存开关并保留原有文字");
             var copiedImage = controller.Gallery.Collected.First();
             controller.Act(ShotAction.Copy, copiedImage);

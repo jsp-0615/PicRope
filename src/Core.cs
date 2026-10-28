@@ -80,11 +80,20 @@ namespace ScreenLine
 
     internal sealed class TextCollection
     {
+        public const int MaxItems = 20;
         public readonly StateStore Store;
         public List<TextItem> Items { get { return Store.State.Texts; } }
         public event Action Changed;
 
-        public TextCollection(StateStore store) { Store = store; }
+        public TextCollection(StateStore store)
+        {
+            Store = store;
+            if (Items.Count <= MaxItems) return;
+            var removed = Items.GetRange(MaxItems, Items.Count - MaxItems);
+            Items.RemoveRange(MaxItems, removed.Count);
+            try { Store.Save(); }
+            catch { Items.AddRange(removed); throw; }
+        }
 
         public bool CollectClipboard
         {
@@ -107,8 +116,10 @@ namespace ScreenLine
             if (existing != null) return existing;
             var added = new TextItem { Id = Guid.NewGuid().ToString("N"), Content = content, CreatedUtc = DateTime.UtcNow };
             Items.Insert(0, added);
+            var removed = Items.Count > MaxItems ? Items.GetRange(MaxItems, Items.Count - MaxItems) : new List<TextItem>();
+            if (removed.Count > 0) Items.RemoveRange(MaxItems, removed.Count);
             try { Store.Save(); }
-            catch { Items.Remove(added); throw; }
+            catch { Items.Remove(added); Items.AddRange(removed); throw; }
             if (Changed != null) Changed();
             return added;
         }

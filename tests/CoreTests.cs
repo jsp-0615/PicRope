@@ -241,6 +241,34 @@ namespace ScreenLine.Tests
                 var restored = new TextCollection(new StateStore(texts.Store.Root));
                 Check(restored.Items[1].Content == content && restored.Items[1].Id == first.Id && Math.Abs((restored.Items[1].CreatedUtc - first.CreatedUtc).TotalMilliseconds) < 1);
             });
+            Run("文字记录超过 20 条时按先入先出移除最早记录并持久化", delegate
+            {
+                var texts = new TextCollection(new StateStore(Path.Combine(root, "text-fifo")));
+                for (int i = 0; i < 25; i++) texts.Add("文字 " + i);
+                Check(texts.Items.Count == 20 && texts.Items[0].Content == "文字 24" && texts.Items[19].Content == "文字 5");
+                var restored = new TextCollection(new StateStore(texts.Store.Root));
+                Check(restored.Items.Select(t => t.Content).SequenceEqual(texts.Items.Select(t => t.Content)));
+                Check(restored.Add("文字 5") == restored.Items[19] && restored.Items.Count == 20);
+            });
+            Run("已有超限文字启动时只保留最近 20 条并保存", delegate
+            {
+                var store = new StateStore(Path.Combine(root, "text-fifo-legacy"));
+                store.State.Images.Add("保留.png");
+                for (int i = 29; i >= 0; i--) store.State.Texts.Add(new TextItem { Id = i.ToString(), Content = "文字 " + i });
+                store.Save();
+                var restored = new TextCollection(new StateStore(store.Root));
+                Check(restored.Items.Count == 20 && restored.Items[0].Content == "文字 29" && restored.Items[19].Content == "文字 10");
+                var saved = new StateStore(store.Root);
+                Check(saved.State.Texts.Count == 20 && saved.State.Images.Single() == "保留.png");
+            });
+            Run("超限时保存失败恢复原有 20 条文字", delegate
+            {
+                var texts = new TextCollection(new StateStore(Path.Combine(root, "text-fifo-failure")));
+                for (int i = 0; i < 20; i++) texts.Add("文字 " + i);
+                Directory.CreateDirectory(Path.Combine(texts.Store.Root, "state.json.tmp"));
+                try { texts.Add("新增"); Check(false); } catch (UnauthorizedAccessException) { }
+                Check(texts.Items.Count == 20 && texts.Items[0].Content == "文字 19" && texts.Items[19].Content == "文字 0");
+            });
             Run("删除文字持久化，保留其他文字、截图和主题设置", delegate
             {
                 var store = new StateStore(Path.Combine(root, "delete-texts"));
