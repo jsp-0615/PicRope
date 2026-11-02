@@ -1109,12 +1109,12 @@ namespace ScreenLine.Tests
             SetCursorPos(bounds.Left + 400, bounds.Top + 110);
             await Task.Delay(150);
             SetCursorPos(bounds.Left + 400, bounds.Bottom + 200);
-            await Task.Delay(900);
-            Check(controller.Shelf.Revealed, "鼠标移开 0.9 秒后仍保持展开，留出操作时间");
+            await Task.Delay(180);
+            Check(controller.Shelf.Revealed, "鼠标短暂移开时仍保持展开");
             SetCursorPos(bounds.Left + 400, bounds.Top + 110);
             await Task.Delay(150);
             SetCursorPos(bounds.Left + 400, bounds.Bottom + 200);
-            await Task.Delay(1000);
+            await Task.Delay(180);
             Check(controller.Shelf.Revealed, "鼠标返回绳子后重新计算收起等待时间");
             await Until(() => !controller.Shelf.Revealed);
             Check(!controller.Shelf.Revealed, "鼠标移开后自动收起");
@@ -1171,6 +1171,7 @@ namespace ScreenLine.Tests
             await Task.Delay(700);
             controller.Gallery.Add(path, picture); await Task.Delay(200);
             controller.Act(ShotAction.Trash, controller.Gallery.Items.Single());
+            await Until(() => shelf.MotionWindows.Any(flight => flight.Falling));
             Check(shelf.MotionWindows.Single().Falling, "移到回收站继续使用下落删除动画");
             var basketMotion = (SpringMotion)typeof(ShelfWindow).GetField("basketMotion", flags).GetValue(shelf);
             Check(Math.Abs(basketMotion.Position) + Math.Abs(basketMotion.Velocity) < 0.05, "删除图片不会误触发篮子的接收反馈");
@@ -1241,6 +1242,7 @@ namespace ScreenLine.Tests
                 IntPtr focus = WindowsNative.GetForegroundWindow();
                 IntPtr beforeHit = GetAncestor(WindowFromPoint(barPoint), 2);
                 controller.Act(action, item);
+                await Until(() => controller.Shelf.MotionWindows.Any());
                 var flight = controller.Shelf.MotionWindows.Single();
                 Check(flight.Falling == (action == ShotAction.Trash), "放篮子与移到回收站使用不同动画");
                 IntPtr handle = new System.Windows.Interop.WindowInteropHelper(flight).Handle;

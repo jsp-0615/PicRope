@@ -42,6 +42,10 @@ namespace ScreenLine
         internal TextWindow TextWindow { get; private set; }
         internal readonly List<ImageEditorWindow> Editors = new List<ImageEditorWindow>();
         readonly List<PinnedImageWindow> capturePins = new List<PinnedImageWindow>();
+        readonly HashSet<string> pendingTrash = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        internal Func<string, Task> RecycleFile = path => Task.Run(() => FileSystem.DeleteFile(path, UIOption.OnlyErrorDialogs, RecycleOption.SendToRecycleBin));
+        internal Func<string, Task<Tuple<BitmapSource, byte[]>>> PrepareImageCopy = path => Task.Run(() => ReadImageForCopy(path));
+        internal Func<object, Task> WriteClipboard = WindowsClipboard.Write;
         readonly AppUpdates updates = new AppUpdates();
         readonly CancellationTokenSource updateLifetime = new CancellationTokenSource();
         readonly DispatcherTimer updateTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(15) };
@@ -54,7 +58,7 @@ namespace ScreenLine
         MenuItem captureMenu;
         bool checkingUpdates, disposed, capturePreparing;
         uint textClipboardSequence;
-        int textClipboardVersion;
+        int textClipboardVersion, copyRequestVersion;
         const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
 
         public DesktopController(StateStore store, string screenshots, bool automaticUpdates = true)
@@ -84,7 +88,8 @@ namespace ScreenLine
             tray.Text = "PicRope · 图绳";
             TrayMenu = new TrayPanel();
             SyncScreens();
-            TrayMenu.Opened += delegate { SyncScreens(); };
+            TrayMenu.Opened += delegate { Shelf.ChoosingTray = true; SyncScreens(); };
+            TrayMenu.Closed += delegate { Shelf.ChoosingTray = false; };
             TrayMenu.ScreenMenu.Opened += delegate { SyncScreens(); };
             TrayMenu.OnAction(TrayMenu.VisibilityButton, delegate { Shelf.Toggle(); });
             if (events.ShortcutAvailable) TrayMenu.Shortcut.Text = "Ctrl+Alt+T";
@@ -377,26 +382,35 @@ namespace ScreenLine
 
         static string Quote(string path) { return "\"" + path + "\""; }
 
+        static Tuple<BitmapSource, byte[]> ReadImageForCopy(string path)
+        {
+            using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+            {
+                var image = BitmapDecoder.Create(stream, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad).Frames[0];
+                byte[] png = ImageContent.EncodeClipboard(image);
+                image.Freeze();
+                return Tuple.Create((BitmapSource)image, png);
+            }
+        }
+
         public async void Act(ShotAction action, CaptureItem item)
         {
             try
             {
+                if (pendingTrash.Contains(item.Path)) return;
                 if (!File.Exists(item.Path)) { Gallery.Prune(); return; }
                 switch (action)
                 {
                     case ShotAction.Copy:
+                        int copyVersion = ++copyRequestVersion;
+                        var prepared = await PrepareImageCopy(item.Path);
+                        if (disposed || copyVersion != copyRequestVersion || pendingTrash.Contains(item.Path) || !File.Exists(item.Path)) return;
                         var payload = new DataObject();
-                        byte[] png;
-                        using (var stream = new FileStream(item.Path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
-                        {
-                            var image = BitmapDecoder.Create(stream, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad).Frames[0];
-                            payload.SetImage(image);
-                            png = ImageContent.EncodeClipboard(image);
-                        }
-                        payload.SetData("PNG", new MemoryStream(png));
+                        payload.SetImage(prepared.Item1);
+                        payload.SetData("PNG", new MemoryStream(prepared.Item2));
                         payload.SetFileDropList(new StringCollection { item.Path });
-                        await WindowsClipboard.Write(payload);
-                        Shelf.ShowCopied(item.Path);
+                        await WriteClipboard(payload);
+                        if (!disposed) Shelf.ShowCopied(item.Path);
                         break;
                     case ShotAction.Open:
                         Process.Start(new ProcessStartInfo(item.Path) { UseShellExecute = true });
@@ -421,7 +435,11 @@ namespace ScreenLine
                         break;
                     case ShotAction.Save:
                         var dialog = new SaveFileDialog { Title = "保存副本", FileName = Path.GetFileName(item.Path), Filter = "图片|*" + Path.GetExtension(item.Path), OverwritePrompt = true };
-                        if (dialog.ShowDialog() == true && !FileRules.SameFile(item.Path, dialog.FileName)) File.Copy(item.Path, dialog.FileName, true);
+                        if (dialog.ShowDialog() == true && !FileRules.SameFile(item.Path, dialog.FileName))
+                        {
+                            string destination = dialog.FileName;
+                            await Task.Run(() => File.Copy(item.Path, destination, true));
+                        }
                         break;
                     case ShotAction.Locate:
                         Process.Start("explorer.exe", "/select," + Quote(item.Path));
@@ -431,10 +449,13 @@ namespace ScreenLine
                         Gallery.Remove(item);
                         break;
                     case ShotAction.Trash:
-                        FileSystem.DeleteFile(item.Path, UIOption.OnlyErrorDialogs, RecycleOption.SendToRecycleBin);
-                        Shelf.ShowDiscard(item);
-                        Gallery.Remove(item);
-                        Gallery.Prune();
+                        pendingTrash.Add(item.Path);
+                        Shelf.SetDeleting(item, true);
+                        try { await RecycleFile(item.Path); }
+                        finally { pendingTrash.Remove(item.Path); if (!disposed) Shelf.SetDeleting(item, false); }
+                        if (File.Exists(item.Path)) break;
+                        if (!disposed) Shelf.ShowDiscard(item);
+                        Gallery.Forget(item);
                         break;
                 }
             }

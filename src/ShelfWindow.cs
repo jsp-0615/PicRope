@@ -54,7 +54,7 @@ namespace ScreenLine
         public event Action TextRequested;
         public event Action RopeHidden;
         readonly TranslateTransform slide = new TranslateTransform(0, -240);
-        readonly SpringMotion revealMotion = new SpringMotion(0.42, 0.82, -240);
+        readonly SpringMotion revealMotion = new SpringMotion(0.32, 0.82, -240);
         readonly SpringMotion ropeMotion = new SpringMotion(0.55, 0.78, 18);
         readonly SpringMotion scrollMotion = new SpringMotion(0.55, 0.78, 0);
         readonly Stopwatch clock = Stopwatch.StartNew();
@@ -62,7 +62,7 @@ namespace ScreenLine
         readonly List<ShotFlight> flights = new List<ShotFlight>();
         readonly Dictionary<string, PinnedImageWindow> pins = new Dictionary<string, PinnedImageWindow>(StringComparer.OrdinalIgnoreCase);
         bool closing;
-        readonly DispatcherTimer pointer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(30) };
+        readonly DispatcherTimer pointer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(20) };
         DateTime edgeSince = DateTime.MaxValue, awaySince = DateTime.MaxValue, peekUntil;
         DateTime nextGust;
         double lastFrame, hideTime, hideFrom, drawnWidth = -1, drawnSag = -1;
@@ -80,6 +80,7 @@ namespace ScreenLine
         internal bool ChoosingAppearance { get; set; }
         internal bool ChoosingBasket { get; set; }
         internal bool ChoosingTexts { get; set; }
+        internal bool ChoosingTray { get; set; }
         double PhotoWidth { get { return Math.Max(1, (ActualWidth > 0 ? ActualWidth : Width) - 308); } }
         double LineWidth { get { return PhotoWidth + 260; } }
         double ScrollLimit { get { return Math.Max(0, content.Width - PhotoWidth); } }
@@ -448,6 +449,12 @@ namespace ScreenLine
             PlayFlight(new ShotFlight(Display, card, start, false, card.Land));
         }
 
+        internal void SetDeleting(CaptureItem item, bool deleting)
+        {
+            ShotCard card;
+            if (cards.TryGetValue(item.Path, out card)) card.SetDeleting(deleting);
+        }
+
         public void ShowDiscard(CaptureItem item)
         {
             ShotCard card;
@@ -588,9 +595,9 @@ namespace ScreenLine
             else
             {
                 hideTime += elapsed;
-                double t = Math.Min(1, hideTime / 0.22);
+                double t = Math.Min(1, hideTime / 0.18);
                 revealMotion.Position = hideFrom + (-240 - hideFrom) * t * t;
-                revealMotion.Velocity = 2 * (-240 - hideFrom) * t / 0.22;
+                revealMotion.Velocity = 2 * (-240 - hideFrom) * t / 0.18;
                 if (t == 1) revealMotion.Snap(-240);
             }
             slide.Y = revealMotion.Position;
@@ -614,7 +621,7 @@ namespace ScreenLine
                 card.ScrollWith(scrollVelocity);
                 card.Frame(elapsed, ropeMotion.Position, LineWidth, viewport.HorizontalOffset);
             }
-            if (!Revealed && hideTime >= 0.22) StopRendering();
+            if (!Revealed && hideTime >= 0.18) StopRendering();
         }
 
         bool OverControl(WindowsNative.Point cursor)
@@ -655,7 +662,7 @@ namespace ScreenLine
             if (nearTop && !down && !suppressEdge && !WindowsNative.FullScreen(screen, Handle))
             {
                 if (edgeSince == DateTime.MaxValue) edgeSince = now;
-                if (now - edgeSince >= TimeSpan.FromMilliseconds(320) && (!Revealed || screen.DeviceName != Display.DeviceName))
+                if (now - edgeSince >= TimeSpan.FromMilliseconds(120) && (!Revealed || screen.DeviceName != Display.DeviceName))
                 {
                     MoveToDisplay();
                     Reveal(true, false, 0);
@@ -676,12 +683,12 @@ namespace ScreenLine
             WindowsNative.Rectangle bounds;
             WindowsNative.GetWindowRect(Handle, out bounds);
             bool inside = cursor.X >= bounds.Left && cursor.X < bounds.Right && cursor.Y >= Display.Bounds.Top && cursor.Y < bounds.Bottom;
-            if (inside) pinned = false;
-            if (inside || pinned || busy || viewing || ChoosingAppearance || ChoosingBasket || ChoosingTexts || now < peekUntil) awaySince = DateTime.MaxValue;
+            if (inside) { pinned = false; peekUntil = DateTime.MinValue; }
+            if (inside || pinned || busy || viewing || ChoosingAppearance || ChoosingBasket || ChoosingTexts || ChoosingTray || now < peekUntil) awaySince = DateTime.MaxValue;
             else
             {
                 if (awaySince == DateTime.MaxValue) awaySince = now;
-                if (now - awaySince > TimeSpan.FromMilliseconds(1200)) Reveal(false, false, 0);
+                if (now - awaySince > TimeSpan.FromMilliseconds(450)) Reveal(false, false, 0);
             }
         }
 
@@ -729,6 +736,13 @@ namespace ScreenLine
         public LineTheme Appearance { get; private set; }
         public int ColorIndex { get; private set; }
         internal double MountX { get { return xMotion.Target; } }
+
+        internal void SetDeleting(bool deleting)
+        {
+            close.IsEnabled = !deleting;
+            Surface.Cursor = deleting ? Cursors.Wait : null;
+            close.ToolTip = deleting ? "正在移到回收站…" : "删除图片（移到回收站）";
+        }
 
         public ShotCard(CaptureItem item, Action<ShotAction, CaptureItem> act)
         {

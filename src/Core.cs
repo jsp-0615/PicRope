@@ -347,6 +347,24 @@ namespace ScreenLine
             Notify();
         }
 
+        public void Forget(CaptureItem item)
+        {
+            int shown = Items.IndexOf(item), collected = Collected.IndexOf(item);
+            if (shown < 0 && collected < 0) return;
+            if (shown >= 0) Items.RemoveAt(shown);
+            if (collected >= 0) Collected.RemoveAt(collected);
+            try { Save(); }
+            catch
+            {
+                if (shown >= 0) Items.Insert(shown, item);
+                if (collected >= 0) Collected.Insert(collected, item);
+                Store.State.Images = Items.Select(i => i.Path).ToList();
+                Store.State.Collection = Collected.Select(i => i.Path).ToList();
+                throw;
+            }
+            Notify();
+        }
+
         public void Clear()
         {
             Items.Clear();

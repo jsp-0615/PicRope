@@ -172,6 +172,26 @@ namespace ScreenLine.Tests
                 gallery.Prune();
                 Check(gallery.Items.Count == 0 && gallery.Collected.Count == 0);
             });
+            Run("删除图片的挂图和收集记录只通知一次", delegate
+            {
+                var gallery = new Gallery(new StateStore(Path.Combine(root, "forget-profile")));
+                string file = WritePicture("忘记图片.png", 121);
+                gallery.Add(file, ImageContent.Read(file));
+                var item = gallery.Items.Single(); int changes = 0; gallery.Changed += delegate { changes++; };
+                gallery.Forget(item);
+                Check(changes == 1 && gallery.Items.Count == 0 && gallery.Collected.Count == 0 && File.Exists(file));
+                var restored = new StateStore(gallery.Store.Root);
+                Check(restored.State.Images.Count == 0 && restored.State.Collection.Count == 0);
+            });
+            Run("删除记录保存失败时恢复挂图和篮子", delegate
+            {
+                var gallery = new Gallery(new StateStore(Path.Combine(root, "forget-rollback-profile")));
+                string file = WritePicture("记录恢复.png", 122);
+                gallery.Add(file, ImageContent.Read(file)); var item = gallery.Items.Single();
+                Directory.CreateDirectory(Path.Combine(gallery.Store.Root, "state.json.tmp"));
+                try { gallery.Forget(item); Check(false); } catch (UnauthorizedAccessException) { }
+                Check(gallery.Items.Single() == item && gallery.Collected.Single() == item && gallery.Store.State.Images.Single() == item.Path && gallery.Store.State.Collection.Single() == item.Path);
+            });
             Run("自动挂图开关保存后可恢复，旧版配置默认开启", delegate
             {
                 var store = new StateStore(Path.Combine(root, "auto-hang-profile"));

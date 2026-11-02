@@ -111,6 +111,20 @@ namespace ScreenLine.Tests
             var surface = (Border)palettes[0].Child;
             surface.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Right) { RoutedEvent = UIElement.PreviewMouseRightButtonDownEvent });
             Check(cancelled && !completed && !palettes[0].IsOpen, "截图工具面板内右键也会取消");
+            var white = new byte[48 * 48 * 4];
+            for (int i = 0; i < white.Length; i++) white[i] = 255;
+            var paper = BitmapSource.Create(48, 48, 96, 96, PixelFormats.Bgra32, null, white, 48 * 4);
+            var stroke = new CaptureAnnotation { Tool = CaptureTool.Pen, Color = Colors.Red, Width = 3 };
+            stroke.Points.Add(new Point(4, 10)); stroke.Points.Add(new Point(20, 10)); stroke.Complete();
+            var area = new Drawing.Rectangle(0, 0, 48, 48);
+            CaptureRendering.Compose(paper, null, area, area, new[] { stroke });
+            for (int i = 0; i < stroke.Points.Count; i++) stroke.Points[i] = stroke.Points[i] + new Vector(0, 15);
+            stroke.InvalidateGeometry();
+            var moved = CaptureRendering.Compose(paper, null, area, area, new[] { stroke });
+            var movedPixels = new byte[white.Length]; moved.CopyPixels(movedPixels, 48 * 4, 0);
+            int oldPixel = (10 * 48 + 10) * 4, newPixel = (25 * 48 + 10) * 4;
+            Check(movedPixels[oldPixel] > 240 && movedPixels[oldPixel + 1] > 240 && movedPixels[newPixel] < 30 && movedPixels[newPixel + 2] > 220,
+                "移动选区后已完成的画笔标注出现在新位置");
             var screens = System.Windows.Forms.Screen.AllScreens;
             var firstScreen = screens[0].Bounds;
             var secondScreen = screens.Length > 1 ? screens[1].Bounds : firstScreen;
@@ -127,6 +141,23 @@ namespace ScreenLine.Tests
             Check(selected.Width > 0 && selected.Height > 0, "选区可跨屏完成且无需抢占鼠标");
             var owner = Field<ScreenCapture.CaptureOverlay>(capture, "toolbarOwner");
             Check(owner != null && Field<Border>(owner, "toolbar") != null, "跨屏选区结束后显示完整工具栏");
+            int visibleClips = 0;
+            foreach (var overlay in captureWindows)
+            {
+                var expected = Drawing.Rectangle.Intersect(selected, overlay.Bounds);
+                var clip = Field<RectangleGeometry>(overlay, "selectedClip").Rect;
+                if (expected.Width > 0 && expected.Height > 0) { Check(!clip.IsEmpty && clip.Width > 0 && clip.Height > 0, "选区在对应屏幕显示原始画面"); visibleClips++; }
+                else Check(clip.IsEmpty || clip.Width == 0 || clip.Height == 0, "选区外的屏幕不显示选中画面");
+            }
+            Check(visibleClips >= 1, "选区至少显示在一块屏幕");
+            pointer = new WindowsNative.Point { X = selected.Left + selected.Width / 4, Y = selected.Top + selected.Height / 4 };
+            var ownerCanvas = Field<Canvas>(owner, "canvas");
+            capture.SetTool(CaptureTool.Text); Check(ownerCanvas.Cursor == Cursors.IBeam, "文字工具使用文字输入光标");
+            capture.SetTool(CaptureTool.Pen); Check(ownerCanvas.Cursor == Cursors.Pen, "画笔工具使用画笔光标");
+            capture.SetTool(CaptureTool.Mosaic); Check(ownerCanvas.Cursor == Cursors.Pen, "马赛克工具使用画笔光标");
+            capture.SetTool(CaptureTool.Emoji); Check(ownerCanvas.Cursor == Cursors.Hand, "表情工具使用手形光标");
+            capture.SetTool(CaptureTool.Select); Check(ownerCanvas.Cursor == Cursors.SizeAll, "选区内部显示移动光标");
+            Check(ScreenCapture.CursorFor(CaptureTool.Select, selected, new WindowsNative.Point { X = selected.Left, Y = selected.Top }, 10) == Cursors.SizeNWSE, "选区角点显示缩放光标");
             capture.SetTool(CaptureTool.Rectangle);
             pointer = new WindowsNative.Point { X = selected.Left + selected.Width / 4, Y = selected.Top + selected.Height / 4 };
             capture.Begin(owner);

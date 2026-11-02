@@ -1,4 +1,4 @@
-﻿param([switch]$ShortcutUiTests, [string]$OutputDirectory = "build", [switch]$CaptureTests, [switch]$DesktopTests, [switch]$FolderTests, [switch]$MenuTests, [switch]$EditorTests, [switch]$ThemeTests, [switch]$WindTests, [switch]$BasketTests, [switch]$ScrollTests, [switch]$BasketAppearanceTests, [switch]$BasketMotionTests, [switch]$UpdateTests, [switch]$TextTests, [switch]$EnvelopeMotionTests, [switch]$MonitorTests, [switch]$Package)
+﻿param([switch]$RopeActionTests, [switch]$ShortcutUiTests, [string]$OutputDirectory = "build", [switch]$CaptureTests, [switch]$DesktopTests, [switch]$FolderTests, [switch]$MenuTests, [switch]$EditorTests, [switch]$ThemeTests, [switch]$WindTests, [switch]$BasketTests, [switch]$ScrollTests, [switch]$BasketAppearanceTests, [switch]$BasketMotionTests, [switch]$UpdateTests, [switch]$TextTests, [switch]$EnvelopeMotionTests, [switch]$MonitorTests, [switch]$Package)
 $ErrorActionPreference = 'Stop'
 $projectRoot = $PSScriptRoot
 $frameworkPath = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319'
@@ -115,4 +115,11 @@ if ($ShortcutUiTests) {
     if ($LASTEXITCODE -ne 0) { throw '快捷键界面测试构建失败' }
     & (Join-Path $buildPath 'ShortcutUiTests.exe')
     if ($LASTEXITCODE -ne 0) { throw '快捷键界面测试未通过' }
+}
+
+if ($RopeActionTests) {
+    & $compilerPath /nologo /target:exe /platform:x64 /codepage:65001 "/out:$buildPath\RopeActionTests.exe" /main:ScreenLine.Tests.RopeActionTests "/win32manifest:$manifestPath" "/resource:$iconPath,PicRope.Icon" $basketResources $references $sources (Join-Path $projectRoot 'tests\RopeActionTests.cs')
+    if ($LASTEXITCODE -ne 0) { throw '绳子操作测试构建失败' }
+    & (Join-Path $buildPath 'RopeActionTests.exe')
+    if ($LASTEXITCODE -ne 0) { throw '绳子操作测试未通过' }
 }

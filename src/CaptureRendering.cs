@@ -16,6 +16,10 @@ namespace ScreenLine
         public Color Color;
         public double Width;
         public string Text;
+        bool complete;
+        Geometry pathCache, mosaicCache;
+        internal void Complete() { complete = true; }
+        internal void InvalidateGeometry() { pathCache = null; mosaicCache = null; }
 
         public void Draw(DrawingContext dc, ImageSource mosaic, Rect desktop)
         {
@@ -41,19 +45,30 @@ namespace ScreenLine
             }
             else if (Tool == CaptureTool.Pen || Tool == CaptureTool.Mosaic)
             {
-                var path = new StreamGeometry();
-                using (var context = path.Open())
+                var path = pathCache;
+                if (path == null)
                 {
-                    context.BeginFigure(a, false, false);
-                    if (Points.Count == 1) context.LineTo(new Point(a.X + .01, a.Y), true, false);
-                    else for (int i = 1; i < Points.Count; i++) context.LineTo(Points[i], true, false);
+                    var created = new StreamGeometry();
+                    using (var context = created.Open())
+                    {
+                        context.BeginFigure(a, false, false);
+                        if (Points.Count == 1) context.LineTo(new Point(a.X + .01, a.Y), true, false);
+                        else for (int i = 1; i < Points.Count; i++) context.LineTo(Points[i], true, false);
+                    }
+                    created.Freeze(); path = created;
+                    if (complete) pathCache = path;
                 }
-                path.Freeze();
                 if (Tool == CaptureTool.Pen) dc.DrawGeometry(null, pen, path);
                 else
                 {
-                    var wide = new Pen(Brushes.Black, Math.Max(12, Width * 6)) { StartLineCap = PenLineCap.Round, EndLineCap = PenLineCap.Round, LineJoin = PenLineJoin.Round };
-                    dc.PushClip(path.GetWidenedPathGeometry(wide)); dc.DrawImage(mosaic, desktop); dc.Pop();
+                    var clip = mosaicCache;
+                    if (clip == null)
+                    {
+                        var wide = new Pen(Brushes.Black, Math.Max(12, Width * 6)) { StartLineCap = PenLineCap.Round, EndLineCap = PenLineCap.Round, LineJoin = PenLineJoin.Round };
+                        clip = path.GetWidenedPathGeometry(wide); clip.Freeze();
+                        if (complete) mosaicCache = clip;
+                    }
+                    dc.PushClip(clip); dc.DrawImage(mosaic, desktop); dc.Pop();
                 }
             }
             else if ((Tool == CaptureTool.Text || Tool == CaptureTool.Emoji) && !string.IsNullOrEmpty(Text))
@@ -92,8 +107,8 @@ namespace ScreenLine
         public static BitmapSource Pixelate(BitmapSource source)
         {
             int width = Math.Max(1, source.PixelWidth / 12), height = Math.Max(1, source.PixelHeight / 12);
-            var reduced = Render(source, width, height, BitmapScalingMode.LowQuality);
-            return Render(reduced, source.PixelWidth, source.PixelHeight, BitmapScalingMode.NearestNeighbor);
+            // Keep the mosaic small; expand it only while drawing, with nearest-neighbor sampling.
+            return Render(source, width, height, BitmapScalingMode.LowQuality);
         }
         static BitmapSource Render(BitmapSource image, int width, int height, BitmapScalingMode mode)
         {
@@ -105,6 +120,7 @@ namespace ScreenLine
         public static BitmapSource Compose(BitmapSource source, BitmapSource mosaic, System.Drawing.Rectangle desktop, System.Drawing.Rectangle selection, IList<CaptureAnnotation> annotations)
         {
             var visual = new DrawingVisual();
+            RenderOptions.SetBitmapScalingMode(visual, BitmapScalingMode.NearestNeighbor);
             using (var dc = visual.RenderOpen())
             {
                 dc.PushClip(new RectangleGeometry(new Rect(0, 0, selection.Width, selection.Height)));

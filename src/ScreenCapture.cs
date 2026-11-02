@@ -101,7 +101,12 @@ namespace ScreenLine
                 int y = Math.Max(desktop.Top, Math.Min(desktop.Bottom - original.Height, original.Top + point.Y - start.Y));
                 var next = new Drawing.Rectangle(x, y, original.Width, original.Height);
                 int dx = next.Left - selection.Left, dy = next.Top - selection.Top;
-                foreach (var annotation in annotations) for (int i = 0; i < annotation.Points.Count; i++) annotation.Points[i] = annotation.Points[i] + new Vector(dx, dy);
+                if (dx != 0 || dy != 0)
+                    foreach (var annotation in annotations)
+                    {
+                        for (int i = 0; i < annotation.Points.Count; i++) annotation.Points[i] = annotation.Points[i] + new Vector(dx, dy);
+                        annotation.InvalidateGeometry();
+                    }
                 selection = next;
             }
             else if (dragMode == "draw")
@@ -119,6 +124,7 @@ namespace ScreenLine
             Move(); dragging = false; overlay.ReleasePointer();
             if (selection.Width < 2 || selection.Height < 2) { selection = Drawing.Rectangle.Empty; annotations.Clear(); }
             if (active != null && active.Tool != CaptureTool.Pen && active.Tool != CaptureTool.Mosaic && (active.Points.Count < 2 || (active.Points[1] - active.Points[0]).Length < 2)) annotations.Remove(active);
+            if (active != null) active.Complete();
             active = null; toolbarOwner = selection.IsEmpty ? null : WindowAt(cursor()); Refresh();
         }
         internal void SetTool(CaptureTool value) { CommitText(); tool = value; Refresh(); }
@@ -135,12 +141,34 @@ namespace ScreenLine
         internal void Refresh() { foreach (var window in windows) window.Refresh(selection, window == toolbarOwner && !dragging, tool); }
         Point Clamp(WindowsNative.Point p) { return new Point(Math.Max(selection.Left, Math.Min(selection.Right, p.X)), Math.Max(selection.Top, Math.Min(selection.Bottom, p.Y))); }
         static Point ToPoint(WindowsNative.Point p) { return new Point(p.X, p.Y); }
-        string HitSelection(WindowsNative.Point point, double tolerance)
+        string HitSelection(WindowsNative.Point point, double tolerance) { return HitSelection(selection, point, tolerance); }
+        internal static string HitSelection(Drawing.Rectangle selection, WindowsNative.Point point, double tolerance)
         {
             if (point.X < selection.Left - tolerance || point.X > selection.Right + tolerance || point.Y < selection.Top - tolerance || point.Y > selection.Bottom + tolerance) return "";
             string vertical = Math.Abs(point.Y - selection.Top) <= tolerance ? "t" : Math.Abs(point.Y - selection.Bottom) <= tolerance ? "b" : "";
             string horizontal = Math.Abs(point.X - selection.Left) <= tolerance ? "l" : Math.Abs(point.X - selection.Right) <= tolerance ? "r" : "";
             return vertical + horizontal == "" ? "move" : vertical + horizontal;
+        }
+        internal static Cursor CursorFor(CaptureTool tool, Drawing.Rectangle selection, WindowsNative.Point point, double tolerance)
+        {
+            if (selection.IsEmpty) return Cursors.Cross;
+            if (tool == CaptureTool.Select)
+            {
+                switch (HitSelection(selection, point, tolerance))
+                {
+                    case "move": return Cursors.SizeAll;
+                    case "t": case "b": return Cursors.SizeNS;
+                    case "l": case "r": return Cursors.SizeWE;
+                    case "tl": case "br": return Cursors.SizeNWSE;
+                    case "tr": case "bl": return Cursors.SizeNESW;
+                    default: return Cursors.Cross;
+                }
+            }
+            if (!selection.Contains(point.X, point.Y)) return Cursors.No;
+            if (tool == CaptureTool.Text) return Cursors.IBeam;
+            if (tool == CaptureTool.Pen || tool == CaptureTool.Mosaic) return Cursors.Pen;
+            if (tool == CaptureTool.Emoji) return Cursors.Hand;
+            return Cursors.Cross;
         }
         internal static Drawing.Rectangle Resize(Drawing.Rectangle original, WindowsNative.Point start, WindowsNative.Point current, Drawing.Rectangle desktop, string edges)
         {
@@ -194,6 +222,8 @@ namespace ScreenLine
             readonly ScreenCapture capture;
             readonly Canvas canvas;
             readonly PreviewLayer preview;
+            readonly RectangleGeometry selectedClip = new RectangleGeometry();
+            Drawing.Rectangle previousIntersection;
             Border toolbar;
             static readonly Lazy<Style> buttonStyle = new Lazy<Style>(delegate { return (Style)XamlReader.Parse(@"<Style xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' xmlns:x='http://schemas.microsoft.com/winfx/2006/xaml' TargetType='Button'>
   <Setter Property='Foreground' Value='#35404B'/><Setter Property='Background' Value='Transparent'/><Setter Property='BorderThickness' Value='0'/><Setter Property='FocusVisualStyle' Value='{x:Null}'/>
@@ -217,7 +247,9 @@ namespace ScreenLine
                 var grid = new Grid();
                 grid.Children.Add(new Image { Source = image, Stretch = Stretch.Fill });
                 grid.Children.Add(new Border { Background = new SolidColorBrush(Color.FromArgb(125, 0, 0, 0)), IsHitTestVisible = false });
-                preview = new PreviewLayer(this) { IsHitTestVisible = false }; grid.Children.Add(preview);
+                grid.Children.Add(new Image { Source = image, Stretch = Stretch.Fill, Clip = selectedClip, IsHitTestVisible = false });
+                preview = new PreviewLayer(this) { IsHitTestVisible = false };
+                RenderOptions.SetBitmapScalingMode(preview, BitmapScalingMode.NearestNeighbor); grid.Children.Add(preview);
                 canvas = new Canvas { Background = Brushes.Transparent };
                 grid.Children.Add(canvas);
                 var hint = new TextBlock { Text = "拖动选择截图区域 · Esc 取消", Foreground = Brushes.White, FontSize = 14, Margin = new Thickness(20), VerticalAlignment = VerticalAlignment.Top, IsHitTestVisible = false };
@@ -236,7 +268,7 @@ namespace ScreenLine
                     if (args.ClickCount == 2 && !capture.selection.IsEmpty && capture.tool == CaptureTool.Select) { capture.Finish(CaptureResult.Complete); return; }
                     capture.Begin(this);
                 };
-                canvas.MouseMove += delegate { capture.Move(); };
+                canvas.MouseMove += delegate { capture.Move(); UpdateCursor(); };
                 canvas.MouseLeftButtonUp += delegate { capture.End(this); };
                 Closed += delegate { foreach (var popup in palettes) popup.IsOpen = false; };
             }
@@ -358,6 +390,12 @@ namespace ScreenLine
                 var canvas = new Canvas { Width = 24, Height = 24 }; canvas.Children.Add(shape);
                 return new Viewbox { Width = 20, Height = 20, Child = canvas, IsHitTestVisible = false };
             }
+            internal void UpdateCursor()
+            {
+                if (capture.dragging) return;
+                double scale = ScaleX > 0 ? 1 / ScaleX : 1;
+                canvas.Cursor = CursorFor(capture.tool, capture.selection, capture.cursor(), 10 * scale);
+            }
             internal void CapturePointer() { canvas.CaptureMouse(); }
             internal void ReleasePointer() { canvas.ReleaseMouseCapture(); }
             internal void StartText(WindowsNative.Point position)
@@ -378,7 +416,16 @@ namespace ScreenLine
             }
             internal void Refresh(Drawing.Rectangle rect, bool showToolbar, CaptureTool selectedTool)
             {
-                preview.InvalidateVisual();
+                var intersection = Drawing.Rectangle.Intersect(rect, Bounds);
+                if (intersection.Width <= 0 || intersection.Height <= 0) intersection = Drawing.Rectangle.Empty;
+                bool needsRedraw = !intersection.IsEmpty || !previousIntersection.IsEmpty;
+                if (intersection != previousIntersection)
+                {
+                    selectedClip.Rect = intersection.IsEmpty ? Rect.Empty : new Rect((intersection.Left - Bounds.Left) * ScaleX, (intersection.Top - Bounds.Top) * ScaleY, intersection.Width * ScaleX, intersection.Height * ScaleY);
+                    previousIntersection = intersection;
+                }
+                if (needsRedraw) preview.InvalidateVisual();
+                UpdateCursor();
                 if (toolbar == null)
                 {
                     if (!showToolbar) return;
@@ -412,7 +459,6 @@ namespace ScreenLine
                     dc.PushTransform(new MatrixTransform(sx, 0, 0, sy, -owner.Bounds.Left * sx, -owner.Bounds.Top * sy));
                     dc.PushClip(new RectangleGeometry(new Rect(rect.Left, rect.Top, rect.Width, rect.Height)));
                     var desktopRect = new Rect(capture.desktop.Left, capture.desktop.Top, capture.desktop.Width, capture.desktop.Height);
-                    dc.DrawImage(capture.snapshot, desktopRect);
                     foreach (var annotation in capture.annotations) annotation.Draw(dc, capture.mosaic, desktopRect);
                     dc.Pop();
                     var stroke = new Pen(Brushes.LimeGreen, Math.Max(1, 2 / sx));
